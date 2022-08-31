@@ -7,6 +7,10 @@ terraform {
     azapi = {
       source = "azure/azapi"
     }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~>2.19.0"
+    }
     databricks = {
       source = "databricks/databricks"
       version = ">= 1.2.1"
@@ -33,6 +37,20 @@ resource "azurerm_resource_group" "base" {
   name     = "dlevy-anz-traveller"
   location = "Australia East"
 }
+
+resource "azuread_application" "landing" {
+  display_name = "dlevy-anz-traveller-sp"
+}
+
+resource "azuread_application_password" "landing" {
+  application_object_id = azuread_application.landing.object_id
+}
+
+resource "azuread_service_principal" "landing" {
+  application_id               = azuread_application.landing.application_id
+  app_role_assignment_required = false
+}
+
 
 resource "azapi_resource" "access_connector" {
   type      = "Microsoft.Databricks/accessConnectors@2022-04-01-preview"
@@ -75,6 +93,13 @@ resource "azurerm_role_assignment" "uc-role-storage" {
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azapi_resource.access_connector.identity[0].principal_id
 }
+
+resource "azurerm_role_assignment" "uc-role-storage-landing-sp" {
+  scope                = azurerm_storage_account.unity_catalog.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azuread_service_principal.landing.object_id
+}
+
 
 resource "azurerm_databricks_workspace" "workspace" {
   name                = "dlevy-anz-traveller"
@@ -137,15 +162,36 @@ resource "databricks_metastore_assignment" "this" {
   default_catalog_name = "hive_metastore"
 }
 
+resource "azapi_resource" "access_connector_landing" {
+  type      = "Microsoft.Databricks/accessConnectors@2022-04-01-preview"
+  name      = "dlevy-anz-traveller-data"
+  location  = azurerm_resource_group.base.location
+  parent_id = azurerm_resource_group.base.id
+  identity {
+    type = "SystemAssigned"
+  }
+  body = jsonencode({
+    properties = {}
+  })
+}
+
+resource "azurerm_role_assignment" "uc-role-storage-landing-mi" {
+  scope                = azurerm_storage_account.unity_catalog.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azapi_resource.access_connector_landing.identity[0].principal_id
+}
+
+
 resource "databricks_storage_credential" "external_mi" {
   name = "mi_credential"
   azure_managed_identity {
-    access_connector_id = azapi_resource.access_connector.id
+    access_connector_id = azapi_resource.access_connector_landing.id
   }
   comment = "Managed identity credential managed by TF"
-  depends_on = [databricks_metastore_assignment.this]
+  depends_on = [databricks_metastore_assignment.this, azurerm_role_assignment.uc-role-storage-landing-mi]
 }
 
+/*
 resource "databricks_external_location" "landing" {
   name = "landing"
   url = format("abfss://%s@%s.dfs.core.windows.net/",
@@ -157,11 +203,31 @@ resource "databricks_external_location" "landing" {
     databricks_metastore_assignment.this
   ]
 }
+*/
 
+resource "databricks_storage_credential" "external_sp" {
+  name = "sp_credential"
+ azure_service_principal {
+    directory_id = data.azurerm_client_config.current.tenant_id
+    application_id = azuread_application.landing.application_id
+    client_secret  = azuread_application_password.landing.value
+  }
+  comment = "Service Principal credential managed by TF"
+  depends_on = [databricks_metastore_assignment.this]
+}
+
+
+output external_location_landing {
+  value = format("abfss://%s@%s.dfs.core.windows.net/",
+    azurerm_storage_account.unity_catalog.name,
+  azurerm_storage_container.landing.name)
+}
+
+/*
 resource "databricks_grants" "data_engineers_storage_cred" {
   storage_credential = databricks_storage_credential.external_mi.id
   grant {
-    principal  = "Data Engineers"
+    principal  = databricks_group.data_engineers.id
     privileges = ["CREATE_TABLE", "READ_FILES", "WRITE_FILES", "CREATE_EXTERNAL_LOCATION"]
   }
 
@@ -169,11 +235,11 @@ resource "databricks_grants" "data_engineers_storage_cred" {
 resource "databricks_grants" "data_engineers_ext_loc_landing" {
   external_location = databricks_external_location.landing.id
   grant {
-    principal  = "Data Engineers"
+    principal  = databricks_group.data_engineers.id
     privileges = ["READ_FILES", "WRITE_FILES"]
   }
 }
-
+*/
 
 resource "databricks_repo" "data-engineering" {
   url = "https://github.com/davidglevy/traveller-demo"
