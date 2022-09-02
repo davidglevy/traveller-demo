@@ -125,18 +125,18 @@ provider "databricks" {
 
 // Create the demo groups.
 resource "databricks_group" "data_engineers" {
-  display_name               = "Data Engineers"
+  display_name               = "anz pubsec Data Engineers"
   allow_cluster_create       = true
   allow_instance_pool_create = true
 }
-
+/*
 resource "databricks_group" "analysts" {
   display_name               = "Analysts"
   allow_cluster_create       = false
   allow_instance_pool_create = true
   databricks_sql_access = true
 }
-
+*/
 
 resource "databricks_metastore" "this" {
   name = "dlevy-traveller"
@@ -191,19 +191,18 @@ resource "databricks_storage_credential" "external_mi" {
   depends_on = [databricks_metastore_assignment.this, azurerm_role_assignment.uc-role-storage-landing-mi]
 }
 
-/*
+
 resource "databricks_external_location" "landing" {
   name = "landing"
   url = format("abfss://%s@%s.dfs.core.windows.net/",
-    azurerm_storage_account.unity_catalog.name,
-  azurerm_storage_container.landing.name)
+  azurerm_storage_container.landing.name,
+  azurerm_storage_account.unity_catalog.name)
   credential_name = databricks_storage_credential.external_mi.id
   comment         = "Managed by TF"
   depends_on = [
     databricks_metastore_assignment.this
   ]
 }
-*/
 
 resource "databricks_storage_credential" "external_sp" {
   name = "sp_credential"
@@ -223,11 +222,11 @@ output external_location_landing {
   azurerm_storage_container.landing.name)
 }
 
-/*
+
 resource "databricks_grants" "data_engineers_storage_cred" {
   storage_credential = databricks_storage_credential.external_mi.id
   grant {
-    principal  = databricks_group.data_engineers.id
+    principal  = "anz pubsec Data Engineers"
     privileges = ["CREATE_TABLE", "READ_FILES", "WRITE_FILES", "CREATE_EXTERNAL_LOCATION"]
   }
 
@@ -235,11 +234,11 @@ resource "databricks_grants" "data_engineers_storage_cred" {
 resource "databricks_grants" "data_engineers_ext_loc_landing" {
   external_location = databricks_external_location.landing.id
   grant {
-    principal  = databricks_group.data_engineers.id
+    principal  = "anz pubsec Data Engineers"
     privileges = ["READ_FILES", "WRITE_FILES"]
   }
 }
-*/
+
 
 resource "databricks_repo" "data-engineering" {
   url = "https://github.com/davidglevy/traveller-demo"
